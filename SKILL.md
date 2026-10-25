@@ -42,7 +42,7 @@
 - `scripts/loop.sh`：常驻 loop，给 `CREDS` 里每个账号跑一拍，写心跳，再睡到 next_wake（最多 60 秒）；只有动作和错误才写日志。
 - `scripts/keepalive.sh`：自查自拉。判断标准：pidfile 存在、`proc` cmdline 含 loop.sh 绝对路径、心跳 20 分钟内新鲜（loop 在每个账号前都写一次心跳）。
 - `scripts/instabox-loop-watch.sh`：hook 轮询脚本，每 300 秒跑一次 keepalive.sh，只在自动恢复失败时 wake agent。
-- 轮换为什么成立（2026-10-25 实测）：冷却 409 只在连续运行满 8 小时被强制暂停时出现，手动 suspend 后 10 秒就能 resume；477 账号 16:42 被拉回后 runStartedAt 变成 16:42:57，平台按 resume 时刻重新计时。机器内 reboot 没用，平台视角 VM 没停过，runStartedAt 不刷新。
+- 轮换为什么成立（2026-10-25 实测）：冷却 409 只在连续运行满 8 小时被强制暂停时出现，手动 suspend 后 10 秒就能 resume；一台机器被强制暂停、冷却结束被拉回后，runStartedAt 就刷新成拉回的时刻，平台按 resume 时刻重新计时。机器内 reboot 没用，平台视角 VM 没停过，runStartedAt 不刷新。
 - 运行时长 run0：第一次见到机器时取平台的 `runStartedAt`；之后每次从暂停回到运行，取 `runStartedAt` 和当前时间中较晚的那个，防止平台没刷新计时导致反复轮换。
 - 不要用 agent cron 做轮询：每 15 分钟跑一次 agent 费 token，已验证不可取。
 
