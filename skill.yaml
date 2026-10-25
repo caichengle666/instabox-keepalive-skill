@@ -1,0 +1,5 @@
+name: "local-instabox-keepalive"
+title: "InstaBox 保活"
+description: "用零 token 纯脚本保活 InstaBox 机器：每 10 分钟 exec 防闲置休眠，7h50m 主动 suspend→resume 重置 8 小时计时、机内看门狗检查服务，被强制暂停则冷却结束后精准唤醒，多账号全量巡检，agent 只在脚本失败时被叫醒。"
+category: "Work and knowledge"
+include_in_prompt: true
