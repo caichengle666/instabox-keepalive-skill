@@ -13,7 +13,27 @@
 
 全程纯脚本，不经过 agent、不烧 token。agent 只在脚本本身挂了才被叫醒。
 
-触发时机：用户说「InstaBox 保活」「机器老休眠」「防睡」「8 小时到了能不能自己起来」这类需求，或者要在新设备上复刻同一套保活时，读本 skill。
+触发时机：用户说「InstaBox 保活」「帮我部署保活」「机器老休眠」「防睡」「8 小时到了能不能自己起来」这类需求，或者要在新设备上复刻同一套保活时，读本 skill。
+
+## Setup wizard（首次部署：agent 一步步问用户，用户自己操作）
+
+每一步只问一件事，等用户回答再往下走。全程不让用户在聊天里贴 Key。
+
+1. 问账号：「你有几个 InstaBox 账号要保活？」每个账号定一个凭证名，默认 `custom.instabox`，第二个起用 `custom.instabox-2` 或用户自己起的名字。
+2. 教用户拿 API Key（每个账号各做一次）：
+   - 浏览器打开 https://instabox.sh ，用 GitHub 或 Google 登录（就是建机器的那个账号）。
+   - 左侧栏点 **API keys** → **Create Key**，名字填 `muse-keepalive` 之类好认的。
+   - 权限选 **Restricted**，勾 `machines:write`（已含 read，够 exec、暂停、恢复）；嫌麻烦选 **Full access** 也行。
+   - 生成后 Key 以 `ibk_` 开头，**只显示一次**，先复制好别关页面。
+   - 已装 instabox CLI 并登录过的，也可以 `instabox keys create --name muse-keepalive`。
+3. 让用户自己把 Key 存进 Muse 的 Secure Vault（用 `custom-connector-setup` 那套流程弹安全表单给用户填）：类型 `api_key`，请求头 `X-API-Key`，`api_hosts` 为 `api.instabox.sh`，凭证名用第 1 步定的。用户若把 Key 贴进了聊天：提醒他去 API keys 页面撤销这把、重新生成，再走安全表单。
+4. 验证每个凭证：跑 `python3 instabox_tick.py <凭证名> --now`。退出码 0 就是通了，把账号下的机器名念给用户确认。失败按报错处理：
+   - `HTTP 401`：`invalid_key`/`malformed_key` 是 Key 填错，`revoked_key`/`expired_key` 是 Key 已失效，都请用户重新生成后再存一次；`missing_key` 是请求没带上凭证，查凭证名和 api_hosts。
+   - `HTTP 403 missing_scope`：Key 没勾 `machines:write`，请用户重建一把。
+   - 退出码 3：凭证名在 Vault 里找不到，核对拼写。
+5. 把通过验证的凭证名写进 `$ROOT/creds`，每行一个（`#` 开头是注释）。loop 每轮重读，以后加减账号只改这个文件，不用重启。
+6. 问看门狗（可选）：「机器里有没有要一直开着的服务？」有就教他写成 systemd unit 并 enable，把 `watchdog.sh` 放到 `/data/watchdog.sh`、`chmod +x`，`SERVICES` 填服务名；没有就跳过，exec 会退回跑 `date` 只刷活跃。
+7. 按下面 Deploy 部署、启动、挂 hook，最后告诉用户：每台机器约每 7 小时 50 分自动轮换一次、每次停约 10 秒；出问题只有脚本自愈失败才会来找他。
 
 ## Idle rules（先搞懂平台怎么判闲置）
 
@@ -39,7 +59,7 @@
 - `scripts/ib_api.py`：API 调用（凭证走 surrogate，生命周期调用自动带 Idempotency-Key）。
 - `scripts/instabox_tick.py`：保活一拍。读时间记录文件 `machines.json`（按账号分组、按机器名记录，每台只留最近一次：本轮开始运行时间 run0、上次 exec、下次到期 next，时间都是带时区的可读格式；加文件锁，手动 --now 和 loop 同时跑不会互相覆盖），全部没到期直接退出；到期就列出全部机器，由纯函数 `decide()` 决定 exec、轮换、唤醒或等待。`--now` 立刻全量巡检，可当手动唤醒用。
 - `scripts/watchdog.sh`：放进每台机器的 `/data/watchdog.sh`。外部 tick 每 10 分钟和每次开机后用 exec 以 sudo 调它，逐个检查 `SERVICES` 里的 systemd 服务，没起来就 start；没有这个文件时 exec 退回跑 `date`。
-- `scripts/loop.sh`：常驻 loop，给 `CREDS` 里每个账号跑一拍，写心跳，再睡到 next_wake（最多 60 秒）；只有动作和错误才写日志。
+- `scripts/loop.sh`：常驻 loop，每轮重读 `$ROOT/creds`，给里面每个账号跑一拍，写心跳，再睡到 next_wake（最多 60 秒）；只有动作和错误才写日志。
 - `scripts/keepalive.sh`：自查自拉。判断标准：pidfile 存在、`proc` cmdline 含 loop.sh 绝对路径、心跳 20 分钟内新鲜（loop 在每个账号前都写一次心跳）。
 - `scripts/instabox-loop-watch.sh`：hook 轮询脚本，每 300 秒跑一次 keepalive.sh，只在自动恢复失败时 wake agent。
 - 轮换为什么成立（2026-10-25 实测）：冷却 409 只在连续运行满 8 小时被强制暂停时出现，手动 suspend 后 10 秒就能 resume；一台机器被强制暂停、冷却结束被拉回后，runStartedAt 就刷新成拉回的时刻，平台按 resume 时刻重新计时。机器内 reboot 没用，平台视角 VM 没停过，runStartedAt 不刷新。
@@ -48,11 +68,11 @@
 
 ## Deploy
 
-- 给每个 InstaBox 账号在 Secure Vault 注册一个连接：api_key，放在 `X-API-Key` 请求头，api_hosts 为 api.instabox.sh。记下凭证名。
+- 前置：Setup wizard 第 1 到 5 步做完，每个账号的凭证已存进 Secure Vault、验证通过、写进 `$ROOT/creds`。
 - Key 本身绝不进文件、聊天记录、环境变量或日志。调用一律走 authd surrogate 交换（`ib_api.py` 已封装）。
 - 把 `ib_api.py`、`instabox_tick.py`、`loop.sh`、`keepalive.sh` 放进保活目录（默认 `$HOME/workspace/instabox-keepalive`，两个 py 必须同目录），hook 脚本放 hooks 脚本目录。旧的 `instabox_wake.py`、`exec_activity.py` 已并入 tick，删掉。
 - 每台机器里：要常驻的程序都写成 systemd unit（`Restart=always`，`systemctl enable`），开机自启；再把 `watchdog.sh` 放到 `/data/watchdog.sh`，`chmod +x`，在 `SERVICES` 里写上这些服务名。root 盘和 `/data` 在 冷启后也保留，unit 和脚本不会丢。
-- 改一处：`loop.sh` 里的 `CREDS`，每个账号一个凭证名。换目录时同时改 loop.sh、keepalive.sh 和 hook 脚本的 `ROOT`。
+- 账号写在 `$ROOT/creds`，每行一个凭证名（Setup wizard 第 5 步）。换目录时同时改 loop.sh、keepalive.sh 和 hook 脚本的 `ROOT`。
 - 启动时必须用绝对路径跑 keepalive.sh：keepalive 靠 `proc` cmdline 里的绝对路径认进程。换版本时先杀旧 loop 再跑 keepalive.sh。
 - 启动后检查：loop.pid 对应进程活着、heartbeat 每分钟刷新（单账号轮换时可能慢一两分钟）、生成了 machines.json，里面每台机器的 run0 和 next 看着合理。
 - 挂 hook：poll 300 秒，健康时静默，只在自动恢复失败时 wake agent。
