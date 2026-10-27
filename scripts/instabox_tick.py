@@ -8,7 +8,8 @@
 - 每次 exec 跑的是机器里的 /data/watchdog.sh（检查并拉起服务），没有这个脚本就跑 date；exec 既刷活跃又当看门狗。
 - 兜底：真被强制暂停了，按平台返回的 cooldownUntil 提前 10 秒开始唤醒，没成功就每 5 秒再试，2 分钟后改每分钟。
 - 计时以平台 runStartedAt 为准：别处（手动、别的脚本）轮换过，本地记录跟着刷新，不会多轮换一次。
-- 每拍结束写 next_wake（所有账号所有机器里最早的到期时间），loop 睡到那一刻，多台机器各按各的点精确触发。
+- 每拍结束写 next_wake（所有账号所有机器里最早的未来到期时间，最晚 60 秒后），loop 睡到那一刻，多台机器各按各的点精确触发。
+  读列表失败、凭证错误、账号下没机器也照写，loop 不会空转狂打 API。
 
 用法: instabox_tick.py <credential_name> [--now]   --now 忽略到期时间，立刻全量巡检。
 退出码: 0 正常；1 有机器出错；3 凭证错误。
@@ -72,8 +73,11 @@ def wait_state(mid, cred, want, limit=90):
     end = time.time() + limit
     while time.time() < end:
         time.sleep(3)
-        if call("GET", f"/v1/machines/{mid}", cred).get("state") == want:
-            return True
+        try:
+            if call("GET", f"/v1/machines/{mid}", cred).get("state") == want:
+                return True
+        except ApiError:              # 单次查询抖动不打断轮换，继续等到超时
+            pass
     return False
 
 
@@ -100,6 +104,13 @@ def act(action, m, st, cred, now):
 
 
 TIME_KEYS = ("run0", "lastExec", "next")
+
+
+def write_wake(book, now):
+    """next_wake = 所有账号未来最早的到期点，最晚 now+60；绝不写空或过去的时间。"""
+    nxt = [r["next"] for a in book.values() for r in a.values() if r.get("next", 0) > now]
+    with open(os.path.join(ROOT, "next_wake"), "w") as f:
+        f.write(str(int(min(nxt + [now + 60]))))
 
 
 def load_book(path):
@@ -145,10 +156,12 @@ def main():
             machines = call("GET", "/v1/machines", cred).get("machines", [])
         except DynamicCredentialError as e:
             print(f"[{cred}] 凭证错误: {e}", file=sys.stderr)
+            write_wake(book, now)
             return 3
         except Exception as e:
             print(f"{time.strftime('%F %T')} [{cred}] 读取机器列表失败: {e}", file=sys.stderr)
-            return 1                          # 记录不动，下一拍（60 秒后）自然重试
+            write_wake(book, now)             # 记录不动，最晚 60 秒后重试
+            return 1
         rc, fresh = 0, {}
         for m in machines:
             name = m.get("name") or m["id"]
@@ -168,10 +181,7 @@ def main():
             st["next"] = max(min(due, now + EXEC_EVERY), now + RETRY_FAST)
         book[cred] = fresh
         save_book(path, book)
-        # 只看未来的时间点：从 CREDS 里删掉的账号记录会过期，不能让 loop 每秒空转
-        nxt = [r["next"] for a in book.values() for r in a.values() if r.get("next", 0) > now]
-        with open(os.path.join(ROOT, "next_wake"), "w") as f:
-            f.write(str(int(min(nxt))) if nxt else "")
+        write_wake(book, now)
     return rc
 
 

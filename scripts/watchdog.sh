@@ -6,6 +6,7 @@
 set -u
 SERVICES=()   # 改成你的服务名，例如 SERVICES=(sing-box myapp)
 
+[ ${#SERVICES[@]} -eq 0 ] && echo "watchdog: SERVICES 为空，只刷活跃、不守护服务"
 rc=0
 for s in "${SERVICES[@]}"; do
   systemctl is-active --quiet "$s" && continue

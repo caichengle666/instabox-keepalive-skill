@@ -41,7 +41,7 @@
 前置条件：每个 InstaBox 账号在 Muse 的 Secure Vault 里注册一个 API 连接（`api_key`，放在 `X-API-Key` 请求头，`api_hosts` 为 `api.instabox.sh`），记下凭证名。**API Key 绝不写进任何文件、日志或聊天记录**，脚本通过保险库的 surrogate（替身凭证）机制调用。
 
 1. 把 `scripts/` 里的 `ib_api.py`、`instabox_tick.py`、`loop.sh`、`keepalive.sh` 放进保活目录（默认 `~/workspace/instabox-keepalive`，两个 `.py` 必须同目录）；把 `instabox-loop-watch.sh` 放进 hooks 脚本目录并挂上 hook（poll 300 秒）。
-2. 改 `loop.sh` 里的 `CREDS`：每个账号填一个凭证名，例如 `CREDS=(custom.instabox custom.instabox-another-account)`。
+2. 改 `loop.sh` 里的 `CREDS`：每个账号填一个凭证名，默认 `CREDS=(custom.instabox)`，多账号往括号里加，例如 `CREDS=(custom.instabox custom.instabox-work)`。别留没注册的凭证名，否则每轮都报凭证错误。
 3. （可选）把 `watchdog.sh` 放进每台机器的 `/data/watchdog.sh`，`chmod +x`，并在文件里的 `SERVICES` 填要守护的 systemd 服务名（机器里需要免密 sudo）。
 4. 用**绝对路径**启动：`bash ~/workspace/instabox-keepalive/keepalive.sh`（判活靠进程命令行里的绝对路径，所以必须这样启动）。
 5. 启动后检查：`loop.pid` 对应的进程活着、心跳每分钟在刷新、`machines.json` 已生成且每台机器的 `run0`（运行起点）和 `next`（下次到期）合理。
@@ -71,6 +71,7 @@
 - `scripts/keepalive.sh`：自查自拉 loop。
 - `scripts/instabox-loop-watch.sh`：hook 轮询脚本，只在自愈失败时 wake agent。
 - `scripts/watchdog.sh`：放进机器 `/data/watchdog.sh` 的看门狗模板。
+- `tests/test_tick.py`：离线单测（不要凭证、不调 API），仓库根目录跑 `python3 -m unittest discover -s tests`。
 
 ## 注意事项
 

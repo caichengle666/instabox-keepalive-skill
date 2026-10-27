@@ -81,6 +81,7 @@
 - 判活必须用 `proc` cmdline 含 loop.sh 绝对路径加心跳新鲜度，不能只看 pidfile，否则会漏判成已死而拉起僵尸双实例。
 - 绝不用 pkill 加 f 盲杀，只杀 cmdline 能对上的旧 loop。pgrep 加 f 会匹配到执行命令的 shell 自身，查存活时必须排除自匹配。
 - 写操作（suspend、resume、start、stop、建机、删机）要带 Idempotency-Key（UUID），重试同一个 key 不会重复执行。exec 和读操作不用带。
+- next_wake 绝不能留空或写过去的时间：读列表失败、凭证错误、账号下没机器时 tick 也写最晚 60 秒后的时间；loop 睡眠 5 到 60 秒，文件坏了按 60 秒睡。否则 loop 会每秒空转、反复打 API。
 - 凭证 401 或 403 时先确认请求真的带上了 credential，不用 surrogate helper 的请求等于没带凭证，再怀疑 Key 本身。
 - VM 重启或替换会杀掉 loop，hook 在 5 分钟内发现并重启；状态文件在磁盘上，重启后接着算。
 - InstaBox 条款禁 open proxy 和 public VPN exit，跑这类服务有封号风险，部署前先确认用途合规。
@@ -91,5 +92,6 @@
 - `scripts/instabox_tick.py`：保活一拍（exec、轮换、唤醒、冷却等待）。
 - `scripts/loop.sh`：常驻 loop，睡到最早到期的机器，最多 60 秒一拍。
 - `scripts/watchdog.sh`：机器内看门狗。
+- `tests/test_tick.py`：离线单测，改 tick 逻辑后在仓库根目录跑 `python3 -m unittest discover -s tests`。
 - `scripts/keepalive.sh`：自查自拉。
 - `scripts/instabox-loop-watch.sh`：hook 轮询脚本。
